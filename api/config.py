@@ -1,0 +1,10 @@
+API_ID = 28927912
+API_HASH = "196229289a3112bdb9f96f113152057b"
+SESSION = "Session_0.1"
+PHONE_NUMBER = "+79818344205"
+DEVICE_MODEL = "Desktop"  # Не "Redmi 10C" для ПК!
+SYSTEM_VERSION = "Windows 10"
+APP_VERSION = "4.16.5"  # Актуальная версия Telegram Desktop
+LANG_CODE = "en"
+SYSTEM_LANG_CODE = "en-US"
+TIME_ZONE = "Europe/Moscow"
