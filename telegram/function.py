@@ -1,9 +1,19 @@
+import asyncio
+
 from telethon import TelegramClient
 from typing import List, Optional, Union, Dict, Any
 from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
 from telethon.tl.types import Channel, InputChannel, InputPeerChannel, Message
 import logging
 logger = logging.getLogger(__name__)
+from telethon.errors import (
+    ChatWriteForbiddenError,
+    PeerIdInvalidError,
+    MessageDeleteForbiddenError,
+    MessageIdInvalidError,
+    ChannelPrivateError,
+    ChatAdminRequiredError
+)
 
 
 class TelegramFunctions:
@@ -119,42 +129,115 @@ class TelegramFunctions:
     async def add_comment(self, channel: Union[str, int], message_id: int, text: str) -> Optional[Message]:
         """
         Добавить комментарий к сообщению в канале
-        :param channel: @username или ID канала
-        :param message_id: ID сообщения, к которому добавляется комментарий
-        :param text: Текст комментария
-        :return: Объект Message или None при ошибке
+
+        Args:
+            channel: @username или ID канала
+            message_id: ID сообщения для комментария
+            text: Текст комментария
+
+        Returns:
+            Объект Message или None при ошибке
+
+        Raises:
+            ValueError: С конкретным описанием ошибки
         """
         try:
-            if isinstance(channel, str):
+            # Валидация входных параметров
+            if not text.strip():
+                raise ValueError("Текст комментария не может быть пустым")
+
+            if message_id <= 0:
+                raise ValueError("Некорректный ID сообщения")
+
+            # Получаем сущность канала
+            try:
                 channel_entity = await self.client.get_entity(channel)
-            else:
-                channel_entity = InputPeerChannel(channel, 0)
+            except (TypeError, ValueError, ChannelPrivateError) as e:
+                raise ValueError(f"Канал {channel} не найден или недоступен") from e
 
-            return await self.client.send_message(
-                entity=channel_entity,
-                message=text,
-                comment_to=message_id
-            )
+            # Проверяем существование целевого сообщения
+            try:
+                target_msg = await self.client.get_messages(channel_entity, ids=message_id)
+                if not target_msg:
+                    raise ValueError(f"Сообщение с ID {message_id} не найдено")
+            except MessageIdInvalidError:
+                raise ValueError(f"Сообщение с ID {message_id} не существует")
+            except Exception as e:
+                raise ValueError(f"Ошибка проверки сообщения: {str(e)}") from e
+
+            # Отправка комментария
+            try:
+                result = await self.client.send_message(
+                    entity=channel_entity,
+                    message=text,
+                    comment_to=message_id
+                )
+            except ChatWriteForbiddenError:
+                raise ValueError("Нет прав на комментирование в этом канале")
+            except PeerIdInvalidError:
+                raise ValueError("Некорректный ID канала или сообщения")
+
+            return result
+
+        except ValueError as ve:
+            print(f"[VALIDATION ERROR] {str(ve)}")
+            raise
         except Exception as e:
-            print(f"Ошибка добавления комментария: {e}")
-            return None
+            print(f"[CRITICAL ERROR] Unknown error: {str(e)}")
+            raise ValueError(f"Ошибка при отправке комментария: {str(e)}") from e
 
-    async def delete_comment(self, channel: Union[str, int], message_id: int, comment_id: int) -> bool:
+    async def delete_comment(
+            self,
+            channel: Union[str, int],
+            comment_id: int
+    ) -> bool:
         """
         Удалить комментарий в канале
-        :param channel: @username или ID канала
-        :param message_id: ID основного сообщения
-        :param comment_id: ID комментария для удаления
-        :return: True если успешно
+
+        Args:
+            channel: @username или ID канала
+            comment_id: ID комментария для удаления
+
+        Returns:
+            bool: True только если сообщение точно удалено, False в других случаях
         """
         try:
-            await self.client.delete_messages(
-                await self._get_channel_entity(channel),
-                [comment_id]
-            )
-            return True
+            # Валидация параметров
+            if not all([channel, comment_id > 0]):
+                raise ValueError("Invalid parameters")
+
+            # Получаем сущность канала
+            channel_entity = await self._get_channel_entity(channel)
+
+            # Проверяем существование комментария перед удалением
+            try:
+                target_msg = await self.client.get_messages(channel_entity, ids=comment_id)
+                if not target_msg:
+                    raise ValueError("Comment not found")
+            except MessageIdInvalidError:
+                raise ValueError("Comment not found")
+
+            # Удаление с проверкой результата
+            await self.client.delete_messages(channel_entity, [comment_id])
+
+            await asyncio.sleep(1)  # Даём время на обработку
+
+            # Двойная проверка, что сообщение удалено
+            try:
+                await self.client.get_messages(channel_entity, ids=comment_id)
+                # Если дошли сюда - сообщение не удалилось
+                return False
+            except (MessageIdInvalidError, ValueError):
+                return True  # Сообщение действительно удалено
+
+        except MessageDeleteForbiddenError:
+            print("No permission to delete")
+            return False
+        except ChatAdminRequiredError:
+            print("Admin rights required")
+            return False
         except Exception as e:
-            print(f"Ошибка удаления комментария: {e}")
+            print(f"Deletion error: {str(e)}")
             return False
 
     async def get_messages(

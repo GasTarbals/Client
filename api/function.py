@@ -1,8 +1,19 @@
+import asyncio
+
 from telegram import TelegramService
-from fastapi import Depends, HTTPException, APIRouter
+from telethon.tl import functions
+from telethon.tl.types import InputPeerChannel
+from fastapi import Depends, HTTPException, APIRouter, Query, Path
 from pydantic import BaseModel
 from typing import Union, List, Optional, Dict, Any
 import logging
+from telethon.errors import (
+    MessageIdInvalidError,
+    ChannelPrivateError,
+    ChatAdminRequiredError,
+    MessageDeleteForbiddenError
+)
+
 
 logger = logging.getLogger(__name__)
 # Создаем роутер для обработки запросов
@@ -219,46 +230,85 @@ async def add_comment(
     return comment.id
 
 
-@router_function.delete("/comments/delete", response_model=bool)
+@router_function.delete("/comments/{comment_id}")
 async def delete_comment(
-        request: CommentRequest,
+        comment_id: int = Path(..., title="ID комментария", gt=0),
+        channel: str = Query(..., description="Username канала (например, @test_channel)"),
         service: TelegramService = Depends(get_telegram_service)
 ):
     """
-    Удалить комментарий
-    Возвращает True при успешном удалении
-    """
-    if not request.comment_id:
-        raise HTTPException(status_code=400, detail="Comment ID is required")
+    Удалить комментарий в канале с обсуждениями
 
-    success = await service.functions.delete_comment(
-        channel=request.channel,
-        message_id=request.message_id,
-        comment_id=request.comment_id
-    )
-    if not success:
-        raise HTTPException(status_code=400, detail="Failed to delete comment")
-    return success
+    Требования:
+    1. Канал должен иметь включенные обсуждения
+    2. Бот должен быть администратором канала
+    """
+    try:
+        # Получаем сущность канала в правильном формате
+        try:
+            channel_entity = await service.client.get_entity(channel)
+            if not hasattr(channel_entity, 'channel_id'):
+                raise ValueError("Указанная сущность не является каналом")
+
+            input_peer = InputPeerChannel(
+                channel_id=channel_entity.channel_id,
+                access_hash=channel_entity.access_hash
+            )
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=f"Ошибка канала: {str(e)}")
+
+        # 1. Проверка существования комментария
+        try:
+            await service.client(
+                functions.messages.GetDiscussionMessageRequest(
+                    peer=input_peer,
+                    msg_id=comment_id
+                )
+            )
+        except (MessageIdInvalidError, ValueError):
+            raise HTTPException(status_code=404, detail="Комментарий не найден")
+
+        # 2. Удаление
+        try:
+            await service.client.delete_messages(input_peer, [comment_id])
+            return {"status": "success", "deleted_id": comment_id}
+
+        except MessageDeleteForbiddenError:
+            raise HTTPException(status_code=403, detail="Нет прав на удаление")
+        except ChatAdminRequiredError:
+            raise HTTPException(status_code=403, detail="Требуются права администратора")
+
+    except ChannelPrivateError:
+        raise HTTPException(status_code=400, detail="Канал приватный или недоступен")
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка сервера: {str(e)}"
+        )
 
 
 @router_function.get("/comments/latest", response_model=Union[dict, None])
 async def get_last_comment(
-        request: GetMessageRequest,
+        channel: Union[str, int] = Query(..., description="ID или username канала"),
+        message_id: int = Query(..., description="ID сообщения"),
         service: TelegramService = Depends(get_telegram_service)
 ):
     """
     Получить последний комментарий к сообщению
-    Возвращает данные комментария
+    Возвращает данные комментария в формате:
+    {
+        "id": int,
+        "text": str,
+        "date": str (ISO format)
+    }
     """
-    if not request.message_id:
-        raise HTTPException(status_code=400, detail="Message ID is required")
-
     comment = await service.functions.get_last_comment(
-        channel=request.channel,
-        message_id=request.message_id
+        channel=channel,
+        message_id=message_id
     )
     if comment is None:
         raise HTTPException(status_code=404, detail="No comments found")
+
     return {
         "id": comment.id,
         "text": comment.message,
@@ -269,42 +319,77 @@ async def get_last_comment(
 # Эндпоинты для работы с сообщениями
 @router_function.get("/messages/latest", response_model=Union[dict, None])
 async def get_last_message(
-        request: GetMessageRequest,
+        channel: Union[str, int] = Query(..., description="ID или username канала"),
         service: TelegramService = Depends(get_telegram_service)
 ):
     """
     Получить последнее сообщение в канале
-    Возвращает данные сообщения
-    """
-    message = await service.functions.get_last_message(request.channel)
-    if message is None:
-        raise HTTPException(status_code=404, detail="No messages found")
-    return {
-        "id": message.id,
-        "text": message.message,
-        "date": message.date.isoformat()
+    Возвращает данные сообщения в формате:
+    {
+        "id": int,
+        "text": str,
+        "date": str (ISO format)
     }
+    """
+    messages = await service.functions.get_last_message(
+        channel=channel
+    )
+
+    if not messages:
+        raise HTTPException(status_code=404, detail="No messages found")
+
+    # Возвращаем только последнее сообщение (как в оригинальной версии)
+    last_message = messages
+    return {
+        "id": last_message.id,
+        "text": last_message.message,
+        "date": last_message.date.isoformat()
+    }
+
+
+from typing import List, Optional
+from fastapi import Query, HTTPException
 
 
 @router_function.get("/messages", response_model=List[dict])
 async def get_messages(
-        request: GetMessageRequest,
+        channel: Union[str, int] = Query(..., description="ID или username канала"),
+        message_id: Optional[int] = Query(None, description="ID конкретного сообщения"),
+        limit: Optional[int] = Query(1, description="Лимит сообщений"),
         service: TelegramService = Depends(get_telegram_service)
 ):
     """
     Получить список сообщений из канала
-    Можно указать лимит и ID конкретного сообщения
+
+    Параметры:
+    - channel: ID или username канала (обязательный)
+    - message_id: ID конкретного сообщения (опционально)
+    - limit: Количество возвращаемых сообщений (по умолчанию 1)
+
+    Возвращает список сообщений в формате:
+    [{
+        "id": int,
+        "text": str,
+        "date": str (ISO format)
+    }]
     """
     try:
         messages = await service.functions.get_messages(
-            channel=request.channel,
-            message_id=request.message_id,
-            limit=request.limit
+            channel=channel,
+            message_id=message_id,
+            limit=limit
         )
+
+        if not messages:
+            raise HTTPException(status_code=404, detail="Messages not found")
+
         return [{
             "id": msg.id,
             "text": msg.message,
             "date": msg.date.isoformat()
         } for msg in messages]
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
