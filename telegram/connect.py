@@ -4,7 +4,8 @@ import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import RPCError
-from telegram import TelegramFunctions
+from telegram import TelegramFunctions, TelegramComment
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class TelegramService:
         self._connection_params: Dict[str, Any] = {}
         self._initialized = True
         self.functions: Optional[TelegramFunctions] = None
+        self.comment:Optional[TelegramComment] = None
         logger.debug("TelegramService initialized")
 
     async def initialize(
@@ -74,6 +76,7 @@ class TelegramService:
                     **kwargs
                 }
                 self.functions = TelegramFunctions(self.client)
+                self.comment = TelegramComment(self.client)
                 logger.info("Client initialized successfully")
                 return True
 

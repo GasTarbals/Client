@@ -99,146 +99,40 @@ class TelegramFunctions:
             print(f"Ошибка выхода из канала: {e}")
             return False
 
-    async def send_message(self, chat: Union[str, int], text: str) -> Optional[Message]:
+    async def get_last_message(self, channel: Union[str, int]) -> Optional[Message]:
         """
-        Отправить сообщение
-        :param chat: ID чата или @username
-        :param text: Текст сообщения
-        :return: Объект Message или None при ошибке
+        Получить последнее сообщение в канале
+        :param channel: @username или ID канала
+        :return: Последнее сообщение или None при ошибке
         """
         try:
-            return await self.client.send_message(chat, text)
+            messages = await self.client.get_messages(
+                entity=channel,
+                limit=1
+            )
+            return messages[0] if messages else None
         except Exception as e:
-            print(f"Ошибка отправки сообщения: {e}")
+            print(f"Ошибка получения последнего сообщения: {e}")
             return None
 
-    async def delete_message(self, chat: Union[str, int], message_id: int) -> bool:
+
+    async def get_last_comment(self, channel: Union[str, int], message_id: int) -> Optional[Message]:
         """
-        Удалить сообщение
-        :param chat: ID чата или @username
-        :param message_id: ID сообщения для удаления
-        :return: True если успешно
-        """
-        try:
-            await self.client.delete_messages(chat, message_id)
-            return True
-        except Exception as e:
-            print(f"Ошибка удаления сообщения: {e}")
-            return False
-
-    async def add_comment(self, channel: Union[str, int], message_id: int, text: str) -> Optional[Message]:
-        """
-        Добавить комментарий к сообщению в канале
-
-        Args:
-            channel: @username или ID канала
-            message_id: ID сообщения для комментария
-            text: Текст комментария
-
-        Returns:
-            Объект Message или None при ошибке
-
-        Raises:
-            ValueError: С конкретным описанием ошибки
+        Получить последний комментарий к сообщению
+        :param channel: @username или ID канала
+        :param message_id: ID сообщения
+        :return: Последний комментарий или None при ошибке
         """
         try:
-            # Валидация входных параметров
-            if not text.strip():
-                raise ValueError("Текст комментария не может быть пустым")
-
-            if message_id <= 0:
-                raise ValueError("Некорректный ID сообщения")
-
-            # Получаем сущность канала
-            try:
-                channel_entity = await self.client.get_entity(channel)
-            except (TypeError, ValueError, ChannelPrivateError) as e:
-                raise ValueError(f"Канал {channel} не найден или недоступен") from e
-
-            # Проверяем существование целевого сообщения
-            try:
-                target_msg = await self.client.get_messages(channel_entity, ids=message_id)
-                if not target_msg:
-                    raise ValueError(f"Сообщение с ID {message_id} не найдено")
-            except MessageIdInvalidError:
-                raise ValueError(f"Сообщение с ID {message_id} не существует")
-            except Exception as e:
-                raise ValueError(f"Ошибка проверки сообщения: {str(e)}") from e
-
-            # Отправка комментария
-            try:
-                result = await self.client.send_message(
-                    entity=channel_entity,
-                    message=text,
-                    comment_to=message_id
-                )
-            except ChatWriteForbiddenError:
-                raise ValueError("Нет прав на комментирование в этом канале")
-            except PeerIdInvalidError:
-                raise ValueError("Некорректный ID канала или сообщения")
-
-            return result
-
-        except ValueError as ve:
-            print(f"[VALIDATION ERROR] {str(ve)}")
-            raise
+            comments = await self.client.get_messages(
+                entity=channel,
+                reply_to=message_id,
+                limit=1
+            )
+            return comments[0] if comments else None
         except Exception as e:
-            print(f"[CRITICAL ERROR] Unknown error: {str(e)}")
-            raise ValueError(f"Ошибка при отправке комментария: {str(e)}") from e
-
-    async def delete_comment(
-            self,
-            channel: Union[str, int],
-            comment_id: int
-    ) -> bool:
-        """
-        Удалить комментарий в канале
-
-        Args:
-            channel: @username или ID канала
-            comment_id: ID комментария для удаления
-
-        Returns:
-            bool: True только если сообщение точно удалено, False в других случаях
-        """
-        try:
-            # Валидация параметров
-            if not all([channel, comment_id > 0]):
-                raise ValueError("Invalid parameters")
-
-            # Получаем сущность канала
-            channel_entity = await self._get_channel_entity(channel)
-
-            # Проверяем существование комментария перед удалением
-            try:
-                target_msg = await self.client.get_messages(channel_entity, ids=comment_id)
-                if not target_msg:
-                    raise ValueError("Comment not found")
-            except MessageIdInvalidError:
-                raise ValueError("Comment not found")
-
-            # Удаление с проверкой результата
-            await self.client.delete_messages(channel_entity, [comment_id])
-
-            await asyncio.sleep(1)  # Даём время на обработку
-
-            # Двойная проверка, что сообщение удалено
-            try:
-                await self.client.get_messages(channel_entity, ids=comment_id)
-                # Если дошли сюда - сообщение не удалилось
-                return False
-            except (MessageIdInvalidError, ValueError):
-                return True  # Сообщение действительно удалено
-
-        except MessageDeleteForbiddenError:
-            print("No permission to delete")
-            return False
-        except ChatAdminRequiredError:
-            print("Admin rights required")
-            return False
-        except Exception as e:
-            print(f"Deletion error: {str(e)}")
-            return False
+            print(f"Ошибка получения последнего комментария: {e}")
+            return None
 
     async def get_messages(
             self,
@@ -287,44 +181,3 @@ class TelegramFunctions:
         except Exception as e:
             print(f"Ошибка получения сообщений: {e}")
             return []
-
-
-    async def get_last_message(self, channel: Union[str, int]) -> Optional[Message]:
-        """
-        Получить последнее сообщение в канале
-        :param channel: @username или ID канала
-        :return: Последнее сообщение или None при ошибке
-        """
-        try:
-            messages = await self.client.get_messages(
-                entity=channel,
-                limit=1
-            )
-            return messages[0] if messages else None
-        except Exception as e:
-            print(f"Ошибка получения последнего сообщения: {e}")
-            return None
-
-    async def get_last_comment(self, channel: Union[str, int], message_id: int) -> Optional[Message]:
-        """
-        Получить последний комментарий к сообщению
-        :param channel: @username или ID канала
-        :param message_id: ID сообщения
-        :return: Последний комментарий или None при ошибке
-        """
-        try:
-            comments = await self.client.get_messages(
-                entity=channel,
-                reply_to=message_id,
-                limit=1
-            )
-            return comments[0] if comments else None
-        except Exception as e:
-            print(f"Ошибка получения последнего комментария: {e}")
-            return None
-
-    async def _get_channel_entity(self, identifier: Union[str, int]):
-        """Вспомогательный метод для получения entity канала"""
-        if isinstance(identifier, str):
-            return await self.client.get_entity(identifier)
-        return InputPeerChannel(identifier, 0)

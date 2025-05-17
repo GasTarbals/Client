@@ -54,7 +54,7 @@ async def connect():
 
     if telegram_service.is_connected():
         return {
-            "status": "error",
+            "status": "success",
             "message": "Уже подключено",
             "details": {"active": True}
         }
