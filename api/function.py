@@ -260,7 +260,11 @@ async def get_messages(
     [{
         "id": int,
         "text": str,
-        "date": str (ISO format)
+        "date": str (ISO format),
+        "reply_to": {
+            "message_id": int,
+            "text": str | None
+        } | None
     }]
     """
     try:
@@ -273,11 +277,38 @@ async def get_messages(
         if not messages:
             raise HTTPException(status_code=404, detail="Messages not found")
 
-        return [{
-            "id": msg.id,
-            "text": msg.message,
-            "date": msg.date.isoformat()
-        } for msg in messages]
+        result = []
+        for msg in messages:
+            message_data = {
+                "id": msg.id,
+                "text": msg.message,
+                "date": msg.date.isoformat(),
+                "reply_to": None
+            }
+
+            # Если сообщение является ответом на другое
+            if hasattr(msg, 'reply_to') and msg.reply_to:
+                reply_to_msg = msg.reply_to
+                message_data["reply_to"] = {
+                    "message_id": reply_to_msg.reply_to_msg_id,
+                    "text": None  # Можно попытаться получить текст исходного сообщения
+                }
+
+                # Попробуем получить текст сообщения, на которое отвечают
+                try:
+                    replied_message = await service.functions.get_messages(
+                        channel=channel,
+                        message_id=reply_to_msg.reply_to_msg_id,
+                        limit=1
+                    )
+                    if replied_message:
+                        message_data["reply_to"]["text"] = replied_message[0].message
+                except Exception:
+                    pass  # Если не удалось получить текст, оставляем None
+
+            result.append(message_data)
+
+        return result
 
     except HTTPException:
         raise

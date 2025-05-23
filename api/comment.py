@@ -65,7 +65,7 @@ async def add_comment(
         # Отправляем комментарий
         result = await comment_service.add_comment(
             channel=channel,
-            message_id=message_id,
+            channel_message_id=message_id,
             comment=request  # Передаем весь объект схемы
         )
 

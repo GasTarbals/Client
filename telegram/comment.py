@@ -122,30 +122,56 @@ class TelegramComment:
     async def add_comment(
             self,
             channel: Union[str, int],
-            message_id: int,
+            channel_message_id: int,
             comment: TelegramCommentSchema
     ) -> Optional[Message]:
+        """
+        Добавляет комментарий к сообщению в группе обсуждения канала.
+
+        Args:
+            channel: @username или ID канала
+            channel_message_id: ID сообщения в канале, к которому добавляется комментарий
+            comment: Данные комментария (текст и/или медиа)
+
+        Returns:
+            Message: Объект отправленного сообщения или None в случае ошибки
+
+        Raises:
+            ValueError: При ошибках валидации или проблемах с отправкой
+        """
         try:
+            # Валидация входных данных
             comment.validate_content()
 
-            if message_id <= 0:
-                raise ValueError("Некорректный ID сообщения")
+            if channel_message_id <= 0:
+                raise ValueError("Некорректный ID сообщения в канале")
 
+            # Получаем сущность канала и группы обсуждения
             channel_entity, linked_chat = await self._get_channel_and_discussion(channel)
-            await self._validate_message_exists(channel_entity, message_id)
 
+            # Проверяем существование исходного сообщения в канале
+            await self._validate_message_exists(channel_entity, channel_message_id)
+
+            # Находим соответствующее сообщение в группе обсуждения
+            discussion_msg = await self._find_discussion_message(channel_entity, linked_chat, channel_message_id)
+            if not discussion_msg:
+                raise ValueError(
+                    f"Не найдено соответствующее сообщение в группе обсуждения для сообщения {channel_message_id}")
+
+            # Отправляем текстовый комментарий
             if not comment.media:
                 return await self.client.send_message(
                     entity=linked_chat,
                     message=comment.text,
-                    reply_to=message_id
+                    reply_to=discussion_msg.id
                 )
 
+            # Отправляем медиа-комментарий
             file, send_kwargs = await self._prepare_media_file(comment.media)
             send_kwargs.update({
                 'entity': linked_chat,
                 'caption': comment.text or comment.media.caption,
-                'reply_to': message_id
+                'reply_to': discussion_msg.id
             })
 
             return await self.client.send_file(**send_kwargs)
@@ -160,6 +186,47 @@ class TelegramComment:
         except Exception as e:
             logger.error(f"[CRITICAL ERROR] {str(e)}", exc_info=True)
             raise ValueError(f"Ошибка при отправке комментария: {str(e)}") from e
+
+    async def _find_discussion_message(
+            self,
+            channel_entity,
+            linked_chat,
+            channel_message_id: int
+    ) -> Optional[Message]:
+        """
+        Находит сообщение в группе обсуждения по ID сообщения в канале
+
+        Args:
+            channel_entity: Сущность канала
+            linked_chat: Сущность группы обсуждения
+            channel_message_id: ID сообщения в канале
+
+        Returns:
+            Optional[Message]: Найденное сообщение или None
+        """
+        try:
+            # Получаем исходное сообщение из канала
+            channel_msg = await self.client.get_messages(channel_entity, ids=channel_message_id)
+            if not channel_msg:
+                return None
+
+            # Ищем сообщение в группе обсуждения
+            async for msg in self.client.iter_messages(linked_chat):
+                # Сравниваем по дате (±5 секунды) и тексту (если есть)
+                if abs(msg.date.timestamp() - channel_msg.date.timestamp()) <= 5:
+                    if channel_msg.text:
+                        if msg.text == channel_msg.text:
+                            return msg
+                    else:
+                        # Для медиа-сообщений сравниваем captions
+                        if getattr(msg, 'caption', '') == getattr(channel_msg, 'caption', ''):
+                            return msg
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Ошибка поиска сообщения в группе обсуждения: {str(e)}")
+            raise ValueError(f"Не удалось найти сообщение: {str(e)}") from e
 
     async def delete_comment(
             self,
@@ -197,3 +264,4 @@ class TelegramComment:
         except Exception as e:
             logger.error(f"Ошибка при удалении комментария: {str(e)}")
             raise ValueError(f"Ошибка при удалении: {str(e)}") from e
+
