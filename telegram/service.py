@@ -4,8 +4,10 @@ import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import RPCError
+from listener.messager.telegram_monitor import TelegramMonitor
 from telegram import TelegramFunctions, TelegramComment, MTProtoSender
 from telethon.tl.functions.account import UpdateStatusRequest
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ class TelegramService:
         self.functions: Optional[TelegramFunctions] = None
         self.comment: Optional[TelegramComment] = None
         self.mtproto: Optional[MTProtoSender] = None
+        self.monitor: Optional [TelegramMonitor] = None
         logger.debug("TelegramService initialized")
 
     async def initialize(
@@ -121,6 +124,7 @@ class TelegramService:
                 self.functions = TelegramFunctions(self.client)
                 self.comment = TelegramComment(self.client)
                 self.mtproto = MTProtoSender(self.client)
+                self.monitor = TelegramMonitor(self.client)
                 logger.info("Client initialized successfully")
                 return True
 

@@ -2,7 +2,7 @@ from telegram.comment_schema import MediaType, MediaAttachment, TelegramCommentS
 from telegram.message import MTProtoSender
 from telegram.function import TelegramFunctions
 from telegram.comment import TelegramComment
-from telegram.connect import TelegramService
+from telegram.service import TelegramService
 
 __all__ = ["TelegramService" , "TelegramFunctions", "TelegramComment",
            "TelegramCommentSchema", "MediaType", "MediaAttachment", "MediaAttachment", "MTProtoSender"]
